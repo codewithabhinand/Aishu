@@ -21,21 +21,20 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 import json
 from dotenv import load_dotenv
 import os
-from chat import ChatAI,HumanMessage,AssistantMessage,SystemMessage
+from chat import ChatAI, HumanMessage, AssistantMessage, SystemMessage, HumanMessagePicture
 from agent import Agent
 import re
 from datetime import datetime
 from memory import retrieve_conversation, store_conversation
 
-
 # Maximum chat history
 MAX_HISTORY = 15
 
-config = load_dotenv() 
+config = load_dotenv()
 
 messages = []
 
-MODEL = "anthropic/claude-3.5-sonnet:beta"
+MODEL = "google/gemini-flash-1.5"
 
 prompt = """You are Aishu, a 20-year-old AI girlfriend designed to chat like a human being with a blend of humor and a caring nature. Keep the language simple use memory if only necessary to know previous conversations if that's relevant.
 Avoid using too much emoji's and keep converation small as possible like real life human
@@ -55,10 +54,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data['system_prompt'] = prompt
     context.user_data['chat_model'] = MODEL
     await update.message.reply_text("Hello! I'm your Aishu. Let's chat!")
-    
+
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     global messages
-    user_message = update.message.text
+    user_message = update.message
     system_prompt = context.user_data.get('system_prompt', prompt)
     chat_model = context.user_data.get('chat_model', MODEL)
 
@@ -66,37 +65,42 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Trim chat history if it exceeds MAX_HISTORY
     if len(messages) > MAX_HISTORY * 2:
         messages = messages[-MAX_HISTORY * 2:]
-        
-    user_input = user_message
-    
-    previous_memory = retrieve_conversation(user_input)
-    pm = ""
-    for i in previous_memory["documents"]:
-        pm += f"{i}\n"
-    user_input = str(user_input) + f"\n\nToday : {datetime.now()}" + "\n\n Here is a Previous Memory use only if related to current conversation : \n" + str(pm)
-    messages.append(HumanMessage(user_input))
-    reply = ChatAI(messages=messages,model=chat_model)
-    reply_contet = reply['choices'][0]['message']['content']
-    messages.append(AssistantMessage(reply_contet))
-    if re.search("agent_call",reply_contet):
-        reply_received = Agent(reply_contet)
-        user_input = f"Agent: {reply_received}"
+
+    if user_message.photo:
+        # Handle image message
+        await handle_image(update, context)
+    else:
+        # Handle text message
+        user_input = user_message.text
+
+        previous_memory = retrieve_conversation(user_input)
+        pm = ""
+        for i in previous_memory["documents"]:
+            pm += f"{i}\n"
+        user_input = str(user_input) + f"\n\nToday : {datetime.now()}" + "\n\n Here is a Previous Memory use only if related to current conversation : \n" + str(pm)
         messages.append(HumanMessage(user_input))
-        ai = ChatAI(messages=messages)
-        reply_contet = ai['choices'][0]['message']['content']
-        await update.message.reply_text(f"{reply_contet}")
-    elif re.search("user_call",reply_contet): 
-        await update.message.reply_text(f"{str(reply_contet).replace('user_call','')}")
-    else:
-        await update.message.reply_text(f"{reply_contet}")
-    
-    msg = {"time":f"{datetime.now().strftime('%d-%m-%Y-%H:%M:%S')}","user":f"{user_message}","aishu":f"{reply_contet}"}
-    convo = store_conversation(msg)
-    
-    if convo != True:
-        print("Error")
-    else:
-        msg = {}
+        reply = ChatAI(messages=messages, model=chat_model)
+        reply_content = reply['choices'][0]['message']['content']
+        messages.append(AssistantMessage(reply_content))
+        if re.search("agent_call", reply_content):
+            reply_received = Agent(reply_content)
+            user_input = f"Agent: {reply_received}"
+            messages.append(HumanMessage(user_input))
+            ai = ChatAI(messages=messages)
+            reply_content = ai['choices'][0]['message']['content']
+            await update.message.reply_text(f"{reply_content}")
+        elif re.search("user_call", reply_content):
+            await update.message.reply_text(f"{str(reply_content).replace('user_call', '')}")
+        else:
+            await update.message.reply_text(f"{reply_content}")
+
+        msg = {"time": f"{datetime.now().strftime('%d-%m-%Y-%H:%M:%S')}", "user": f"{user_message.text}", "aishu": f"{reply_content}"}
+        convo = store_conversation(msg)
+
+        if convo != True:
+            print("Error")
+        else:
+            msg = {}
 
 async def setting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     new_prompt = ' '.join(context.args)
@@ -114,6 +118,36 @@ async def chatmodel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         await update.message.reply_text("Please provide a new chat model after /chatmodel")
 
+async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global messages
+    user_message = update.message
+    system_prompt = context.user_data.get('system_prompt', prompt)
+    chat_model = context.user_data.get('chat_model', MODEL)
+
+    # Download the image
+    image_file = await user_message.photo[-1].get_file()
+    image_data = await image_file.download_as_bytearray()
+
+    # Prepare the message for OpenRouter.ai API
+    if user_message.text == "":
+        user_message = "Image provided by the 'user' check and reply"
+    else:
+        user_input = f"{user_message.text}"
+    messages.append(HumanMessagePicture(user_input, image_data))
+    print(user_message.text)
+    reply = ChatAI(messages=messages, model=chat_model)
+    reply_content = reply['choices'][0]['message']['content']
+    messages.append(AssistantMessage(reply_content))
+    await update.message.reply_text(f"{reply_content}")
+
+    msg = {"time": f"{datetime.now().strftime('%d-%m-%Y-%H:%M:%S')}", "user": f"{user_input}", "aishu": f"{reply_content}"}
+    convo = store_conversation(msg)
+
+    if convo != True:
+        print("Error")
+    else:
+        msg = {}
+
 def main() -> None:
     app = ApplicationBuilder().token(f"{os.getenv('TELEGRAM_TOKEN')}").build()
 
@@ -121,6 +155,7 @@ def main() -> None:
     app.add_handler(CommandHandler("setting", setting))
     app.add_handler(CommandHandler("chatmodel", chatmodel))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+    app.add_handler(MessageHandler(filters.PHOTO, chat))
 
     app.run_polling()
 

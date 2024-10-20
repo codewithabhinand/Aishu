@@ -20,10 +20,12 @@ import requests
 import json
 from dotenv import load_dotenv
 import os
+from base64 import b64encode
+from io import BytesIO
 
 
 config = load_dotenv()
-MODEL = "anthropic/claude-3.5-sonnet:beta"
+MODEL = "google/gemini-flash-1.5"
 
 def ChatAI(model=MODEL,messages=None) -> dict:
     response = requests.post(
@@ -50,3 +52,25 @@ def AssistantMessage(content: str):
 
 def SystemMessage(content: str):
     return {"role":"system","content":content}
+
+
+def HumanMessagePicture(content: str, image_data: bytes):
+    # Encode the image in base64
+    base64_image = b64encode(image_data).decode('utf-8')
+    image_url = f"data:image/jpeg;base64,{base64_image}"
+
+    return {
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": content
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": image_url
+                }
+            }
+        ]
+    }
