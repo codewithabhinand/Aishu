@@ -53,7 +53,6 @@ def AssistantMessage(content: str):
 def SystemMessage(content: str):
     return {"role":"system","content":content}
 
-
 def HumanMessagePicture(content: str, image_data: bytes):
     # Encode the image in base64
     base64_image = b64encode(image_data).decode('utf-8')
